@@ -1,0 +1,5 @@
+*.svm
+*.pyc
+*.npz
+mnist.pkl.gz
+*.suo
