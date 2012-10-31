@@ -15,6 +15,11 @@ from logistic_sgd import LogisticRegression, load_data
 
 dataset='mnist.pkl.gz'
 batch_size=20
+learning_rate=0.01
+L1_reg=0.00
+L2_reg=0.0001
+n_epochs=1000
+do_svm_training = True
 
 def sv_to_vec(sv, length):
     vec = numpy.zeros(length)
@@ -58,8 +63,11 @@ if __name__ == "__main__":
     tesy = test_set_y.get_value()
     test_set_y = T.cast(test_set_y, 'int32')
 
+    print "# training batches %d" % (train_set_x.get_value(borrow=True).shape[0] / batch_size)
+
     # make trainset smaller
-    tsize = 2
+    #tsize = 200
+    tsize = train_set_x.get_value(borrow=True).shape[0] / batch_size
     train_set_x.set_value(train_set_x.get_value()[0:tsize*batch_size,:])
     train_set_y.set_value(train_set_y.get_value()[0:tsize*batch_size])
     trsx = train_set_x.get_value()
@@ -95,6 +103,12 @@ if __name__ == "__main__":
     classifier.logRegressionLayer.b.set_value(params['logreg_b'])
 
     # test model functions
+    train_loss = theano.function(inputs=[index],
+            outputs=classifier.errors(y),
+            givens={
+                x: train_set_x[index * batch_size:(index + 1) * batch_size],
+                y: train_set_y[index * batch_size:(index + 1) * batch_size]})
+
     test_model = theano.function(inputs=[index],
             outputs=classifier.errors(y),
             givens={
@@ -108,13 +122,16 @@ if __name__ == "__main__":
                 y: valid_set_y[index * batch_size:(index + 1) * batch_size]})
 
     # calculate current loss
+    train_losses = [train_loss(i) for i in xrange(n_train_batches)]
+    train_score = numpy.mean(train_losses)
     validation_losses = [validate_model(i) for i in xrange(n_valid_batches)]
     validation_score = numpy.mean(validation_losses)
     test_losses = [test_model(i) for i in xrange(n_test_batches)]
     test_score = numpy.mean(test_losses)
-    print "Validation: %.3f%%, Test: %.3f%%" % (validation_score * 100.,
-                                                test_score * 100.)
+    print "BP: Training: %.3f%%, Validation: %.3f%%, Test: %.3f%%" % \
+        (train_score * 100., validation_score * 100., test_score * 100.)
 
+if __name__ == "__main__" and do_svm_training:
     # calculate targets hl_targets[sample, hidden_neuron] for hidden layer
     print "Calculating SVM targets..."
     hl = classifier.hiddenLayer
@@ -140,61 +157,27 @@ if __name__ == "__main__":
     svms = []
     ws = []
     bs = []
-    errs = 0
     werrs = 0
     for n in range(hl.n_out):
-        print "Hidden neuron: %d\r" % n,
-        probs.append(svmutil.svm_problem(svm_targets[n], svm_inputs))
+        print "Hidden neuron: %d" % n,
+        print " Problem...",
+        if n == 0:
+            probs.append(svmutil.svm_problem(svm_targets[n], svm_inputs))
+        else:
+            probs.append(svmutil.svm_problem(svm_targets[n], None, tmpl=probs[0]))
         params.append(svmutil.svm_parameter("-q -s 0 -t 0 -c 100"))
+        print " Training...",
         svms.append(svmutil.svm_train(probs[n], params[n]))
+        print " Saving...",
         svmutil.svm_save_model("hidden%04d.svm" % n, svms[n])
 
-        # test model
-        predictions, acc, _ = svmutil.svm_predict(svm_targets[n], svm_inputs, 
-                                                  svms[n])
-        #print "Accuracy: %f" % acc[0]
-        for prediction, label in zip(predictions, svm_targets[n]):
-            if prediction != label:
-                errs += 1
-
+        print " Testing..."
         # get weights from SVM
         w, b = get_svm_weights(svms[n], hl.n_in)
         ws.append(w)
         bs.append(b)
 
-        # check calculated weights
-        #for i in range(len(svm_inputs)):
-        #    #print "Predicting with libsvm for input %d" % i
-        #    # predict using direct libsvm
-        #    xi, idx = svm.gen_svm_nodearray(svm_inputs[i], isKernel=False)
-        #    dec_values = (svm.c_double * 2)()
-        #    label = svm.libsvm.svm_predict_values(svms[n], xi, dec_values)
-
-        #    # predict using weights
-        #    #print len(svm_inputs[i])
-        #    predv = numpy.dot(w, svm_inputs[i]) + b
-        #    pred = numpy.sign(predv)
-
-        #    if pred != label:
-        #        print "Error prediction, no match with libsvm"
-        #        print "target: %f, prediction: %f, direct prediction: %f" % \
-        #            (svm_targets[n][i], pred, label)
-        #        print "predv: %f" % predv
-
-        #        # calculate scalar products
-        #        sprods = []
-        #        ssum = 0
-        #        for j in range(len(fullsvs)):
-        #            sprods.append(numpy.dot(svm_inputs[i], fullsvs[j]))
-        #            print "fullsvs[j]:", fullsvs[j]
-        #            print "sprods[%d] = input[%d] * sv[%d] = %f" % (j, i, j, sprods[j])
-        #            print "coeff[%d] = %f" % (j, svcoef[j][0])
-        #            print "coeff[%d] * sprods[%d] = %f" % (j, j, sprods[j] * svcoef[j][0])
-        #            ssum += sprods[j] * svcoef[j][0]
-        #        print "sum(sprods * coeff) = %f" % ssum
-
-        #        raise Exception()
-
+        # test model
         predv = numpy.dot(w, trsx.T) + b
         pred = numpy.sign(predv)
         pos = 0
@@ -208,31 +191,48 @@ if __name__ == "__main__":
                 print "%d: is: %f, should: %f" % (i, pred[i], svm_targets[n][i])
                 print "%d: prediction value: %f" % (i, predv[i])
                 werrs += 1                    
-        print "Neuron %d: Positive: %d, Negative: %d" % (n, pos, neg)
-        if werrs > 1:
-            raise Exception()
+        #print "Neuron %d: #positive: %d, #negative: %d" % (n, pos, neg)
+        #if werrs > 1:
+        #    raise Exception()
 
-    print "Done, SVM model errors: %d, my predictor errors: %d" % (errs, werrs)    
+    print "Done, hidden layer prediction errors: %d" % werrs
 
     # construct weight and bias matrix
-    svm_hidden_W = numpy.zeros((hl.n_in, hl.n_out))
-    for n in range(hl.n_out):
-        svm_hidden_W[:,n] = ws[n]
+    svm_hidden_W = numpy.asarray(ws).T
     svm_hidden_b = numpy.asarray(bs)
+    svm_logreg_W = classifier.logRegressionLayer.W.get_value()
+    svm_logreg_b = classifier.logRegressionLayer.b.get_value()
 
+    # save SVM weights and biases
+    print "Saving..."
+    numpy.savez_compressed("svm1_mnist.npz", 
+                           hidden_W=svm_hidden_W,
+                           hidden_b=svm_hidden_b,
+                           logreg_W=svm_logreg_W,
+                           logreg_b=svm_logreg_b)
+
+if __name__ == "__main__" and not do_svm_training:
+    #print "Loading..."
+    params = numpy.load("svm1_mnist.npz")
+    svm_hidden_W = params['hidden_W']
+    svm_hidden_b = params['hidden_b']
+    svm_logreg_W = params['logreg_W']
+    svm_logreg_b = params['logreg_b']
+
+if __name__ == "__main__":
     # construct model using SVMs
     svm_classifier = MLP(rng=rng, input=x, n_in=28 * 28, n_hidden=500, n_out=10)
-    svm_classifier.logRegressionLayer.W.set_value(params['logreg_W'])
-    svm_classifier.logRegressionLayer.b.set_value(params['logreg_b'])
+    svm_classifier.logRegressionLayer.W.set_value(svm_logreg_W)
+    svm_classifier.logRegressionLayer.b.set_value(svm_logreg_b)
     svm_classifier.hiddenLayer.W.set_value(svm_hidden_W)
     svm_classifier.hiddenLayer.b.set_value(svm_hidden_b)
 
     # test model functions
-    svm_training_loss = theano.function(inputs=[index],
+    svm_train_loss = theano.function(inputs=[index],
             outputs=svm_classifier.errors(y),
             givens={
-                x: training_set_x[index * batch_size:(index + 1) * batch_size],
-                y: training_set_y[index * batch_size:(index + 1) * batch_size]})
+                x: train_set_x[index * batch_size:(index + 1) * batch_size],
+                y: train_set_y[index * batch_size:(index + 1) * batch_size]})
 
     svm_test_model = theano.function(inputs=[index],
             outputs=svm_classifier.errors(y),
@@ -247,15 +247,105 @@ if __name__ == "__main__":
                 y: valid_set_y[index * batch_size:(index + 1) * batch_size]})
 
     # calculate current loss
-    svm_training_losses = [svm_training_loss(i) for i in xrange(n_valid_batches)]
-    svm_training_score = numpy.mean(svm_training_losses)
+    svm_train_losses = [svm_train_loss(i) for i in xrange(n_train_batches)]
+    svm_train_score = numpy.mean(svm_train_losses)
     svm_validation_losses = [svm_validate_model(i) for i in xrange(n_valid_batches)]
     svm_validation_score = numpy.mean(validation_losses)
     svm_test_losses = [svm_test_model(i) for i in xrange(n_test_batches)]
     svm_test_score = numpy.mean(svm_test_losses)
     print "SVM: Training: %.3f%%, Validation: %.3f%%, Test: %.3f%%" % \
-        (svm_training_score * 100., svm_validation_score * 100., svm_test_score * 100.)
+        (svm_train_score * 100., svm_validation_score * 100., svm_test_score * 100.)
 
-    
+    print 'Training SVM logreg layer...'
+
+    # train logistic regression layer
+    cost = svm_classifier.negative_log_likelihood(y) \
+         + L1_reg * classifier.L1 \
+         + L2_reg * classifier.L2_sqr
+
+    # update only logreg parameters using gradient descent
+    svm_updates = {param: param - learning_rate * T.grad(cost, param) 
+                   for param in svm_classifier.logRegressionLayer.params}
+    svm_train_model = theano.function(inputs=[index], outputs=cost,
+            updates=svm_updates,
+            givens={
+                x: train_set_x[index * batch_size:(index + 1) * batch_size],
+                y: train_set_y[index * batch_size:(index + 1) * batch_size]})
+
+
+    # early-stopping parameters
+    patience = 10000  # look as this many examples regardless
+    patience_increase = 2  # wait this much longer when a new best is
+                           # found
+    improvement_threshold = 0.995  # a relative improvement of this much is
+                                   # considered significant
+    validation_frequency = min(n_train_batches, patience / 2)
+                                  # go through this many
+                                  # minibatche before checking the network
+                                  # on the validation set; in this case we
+                                  # check every epoch
+
+    best_params = None
+    best_validation_loss = numpy.inf
+    best_iter = 0
+    test_score = 0.
+    start_time = time.clock()
+
+    epoch = 0
+    done_looping = False
+
+    while (epoch < n_epochs) and (not done_looping):
+        epoch = epoch + 1
+        for minibatch_index in xrange(n_train_batches):
+
+            minibatch_avg_cost = svm_train_model(minibatch_index)
+            # iteration number
+            iter = epoch * n_train_batches + minibatch_index
+
+            if (iter + 1) % validation_frequency == 0:
+                # compute zero-one loss on validation set
+                validation_losses = [validate_model(i) for i
+                                     in xrange(n_valid_batches)]
+                this_validation_loss = numpy.mean(validation_losses)
+
+                svm_train_losses = [svm_train_loss(i) for i in xrange(n_train_batches)]
+                svm_train_score = numpy.mean(svm_train_losses)
+
+                print('epoch %i, training error %f %%, validation error %f %%' %
+                     (epoch, svm_train_score * 100., this_validation_loss * 100.))
+
+                # if we got the best validation score until now
+                if this_validation_loss < best_validation_loss:
+                    #improve patience if loss improvement is good enough
+                    if this_validation_loss < best_validation_loss *  \
+                           improvement_threshold:
+                        patience = max(patience, iter * patience_increase)
+
+                    best_validation_loss = this_validation_loss
+                    best_iter = iter
+
+                    # test it on the test set
+                    test_losses = [test_model(i) for i
+                                   in xrange(n_test_batches)]
+                    test_score = numpy.mean(test_losses)
+
+                    print(('     epoch %i, minibatch %i/%i, test error of '
+                           'best model %f %%') %
+                          (epoch, minibatch_index + 1, n_train_batches,
+                           test_score * 100.))
+
+            if patience <= iter:
+                    done_looping = True
+                    break
+
+    # calculate current loss
+    svm_train_losses = [svm_train_loss(i) for i in xrange(n_train_batches)]
+    svm_train_score = numpy.mean(svm_train_losses)
+    svm_validation_losses = [svm_validate_model(i) for i in xrange(n_valid_batches)]
+    svm_validation_score = numpy.mean(validation_losses)
+    svm_test_losses = [svm_test_model(i) for i in xrange(n_test_batches)]
+    svm_test_score = numpy.mean(svm_test_losses)
+    print "SVM: after training: Training: %.3f%%, Validation: %.3f%%, Test: %.3f%%" % \
+        (svm_train_score * 100., svm_validation_score * 100., svm_test_score * 100.)
 
 
