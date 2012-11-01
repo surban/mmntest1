@@ -19,7 +19,7 @@ learning_rate=0.01
 L1_reg=0.00
 L2_reg=0.0001
 n_epochs=1000
-do_svm_training = True
+do_svm_training = False
 
 def sv_to_vec(sv, length):
     vec = numpy.zeros(length)
@@ -289,12 +289,11 @@ if __name__ == "__main__":
     best_validation_loss = numpy.inf
     best_iter = 0
     test_score = 0.
-    start_time = time.clock()
 
     epoch = 0
     done_looping = False
 
-    while (epoch < n_epochs) and (not done_looping):
+    while (epoch < n_epochs): # and (not done_looping):
         epoch = epoch + 1
         for minibatch_index in xrange(n_train_batches):
 
@@ -304,15 +303,18 @@ if __name__ == "__main__":
 
             if (iter + 1) % validation_frequency == 0:
                 # compute zero-one loss on validation set
-                validation_losses = [validate_model(i) for i
-                                     in xrange(n_valid_batches)]
-                this_validation_loss = numpy.mean(validation_losses)
+                svm_validation_losses = [svm_validate_model(i) for i
+                                         in xrange(n_valid_batches)]
+                this_validation_loss = numpy.mean(svm_validation_losses)
 
-                svm_train_losses = [svm_train_loss(i) for i in xrange(n_train_batches)]
-                svm_train_score = numpy.mean(svm_train_losses)
-
-                print('epoch %i, training error %f %%, validation error %f %%' %
-                     (epoch, svm_train_score * 100., this_validation_loss * 100.))
+                #svm_train_losses = [svm_train_loss(i) for i in xrange(n_train_batches)]
+                #svm_train_score = numpy.mean(svm_train_losses)
+                #svm_test_losses = [svm_test_model(i) for i in xrange(n_test_batches)]
+                #svm_test_score = numpy.mean(svm_test_losses)
+                #print('epoch %i, training error %f %%, validation error %f %%, test error %f %%' %
+                #     (epoch, svm_train_score * 100., this_validation_loss * 100., svm_test_score * 100.))
+                print('epoch %i, validation error %f %%' %
+                      (epoch, this_validation_loss * 100.))
 
                 # if we got the best validation score until now
                 if this_validation_loss < best_validation_loss:
@@ -325,18 +327,18 @@ if __name__ == "__main__":
                     best_iter = iter
 
                     # test it on the test set
-                    test_losses = [test_model(i) for i
-                                   in xrange(n_test_batches)]
-                    test_score = numpy.mean(test_losses)
+                    svm_test_losses = [svm_test_model(i) for i
+                                       in xrange(n_test_batches)]
+                    svm_test_score = numpy.mean(svm_test_losses)
 
                     print(('     epoch %i, minibatch %i/%i, test error of '
                            'best model %f %%') %
                           (epoch, minibatch_index + 1, n_train_batches,
-                           test_score * 100.))
+                           svm_test_score * 100.))
 
             if patience <= iter:
                     done_looping = True
-                    break
+                    
 
     # calculate current loss
     svm_train_losses = [svm_train_loss(i) for i in xrange(n_train_batches)]
